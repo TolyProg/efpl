@@ -31,13 +31,6 @@ class List(Expr, tuple):
       return '[%s]' % self[0]
     return '[' + super().__str__()[1:-1] + ']'
 
-class Const(Expr):
-  def __init__(self, name, value):
-    self.name = name
-    self.value = value
-  def __str__(self):
-    return self.name + ' = ' + str(self.value)
-
 class Args(List):
   def __str__(self):
     return '(%s)' % super().__str__()[1:-1]
