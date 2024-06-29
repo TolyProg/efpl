@@ -1,8 +1,8 @@
 # Educational functional programming language (EFPL)
 
-Early WIP
+Early WIP, active development
 
 Branches:
-- master (this one): the interpreter (abandoned & outdated)
-- **C_transpiler: idk wut it is (currently under active development)**
+- master: the interpreter (abandoned & outdated)
+- **C_transpiler: (this one)**
 
