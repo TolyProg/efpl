@@ -2,14 +2,7 @@
 
 from lark import Lark, Transformer
 
-class Expr:
-  def eval(self, table):
-    if self in table:
-      return table[self]
-    else:
-      return self
-  def apply(self, args, table):
-    raise Exception('Applying arguments "%s" to %s "%s" as if it was a function' % (args, self.__class__.__name__, self))
+class Expr: pass
 
 class Id(Expr, str):
   def __repr__(self):
@@ -24,33 +17,29 @@ class Str(Expr, str):
     return '"%s"' % super().self
 
 class List(Expr, tuple):
-  def eval(self, table):
-    return self.__class__(map(lambda x: x.eval(table), self))
   def __str__(self):
     if len(self) == 1:
       return '[%s]' % self[0]
     return '[' + super().__str__()[1:-1] + ']'
 
-class Args(List):
+class Args(Expr, list):
+  def __str__(self): return '(%s)' % super().__str__()[1:-1]
+
+class Typed(tuple):
   def __str__(self):
-    return '(%s)' % super().__str__()[1:-1]
+    return '%s:%s' % (self[0], self[1])
+  __repr__ = __str__
 
 class Pars(Args):
-  def table(self, args):
-    if len(self) != len(args):
-      raise Exception('Arguments length mismatch: expected "%s", got "%s")' % (self, args))
-    return dict(zip(self, args))
+  def __str__(self):
+    return ' '.join(map(str, self))
 
 class Fn(Expr):
   def __init__(self, pars, body):
     self.pars = pars
     self.body = body
   def __repr__(self):
-    return '@%s{%s}' % (str(self.pars), str(self.body))
-  def apply(self, args, table):
-    r = self.body.eval(table | self.pars.table(args))
-    #print('fn app "%s%s" -> "%s"' % (self, args, r))
-    return r
+    return '@{%s = %s}' % (str(self.pars), str(self.body))
 
 class Case:
   def __init__(self, cond, body):
@@ -58,55 +47,29 @@ class Case:
     self.body = body
   def __str__(self):
     return '| %s = %s' % (str(self.cond), str(self.body))
-  def matches(self, table):
-    if self.cond.eval(table) == Id('true'):
-      r = self.body.eval(table)
-      return r
-    return None
+  __repr__ = __str__
 
 class Cases(List):
   def __str__(self):
     return ' '.join([str(i) for i in self])
-  def eval(self, table):
-    for i in self:
-      r = i.matches(table)
-      if r != None:
-        return r
-    raise Exception('No match for %s in %s' % (str(table), str(self)))
 
 class App(Expr):
   def __init__(self, obj, args):
     self.obj = obj
     self.args = args
   def __str__(self):
-    return str(self.obj) + str(self.args)
-  def eval(self, table):
-    obj = self.obj.eval(table)
-    args = self.args.eval(table)
-    #print('app self:"%s" obj:"%s" args:"%s"' % (self, obj, args))
-    def conv_b(v):
-      return Id('true') if v else Id('false')
-    match self.obj:
-      case Id('=='): return conv_b(args[0] == args[1])
-      case Id('<>'): return conv_b(args[0] != args[1])
-      case Id('<='): return conv_b(args[0] <= args[1])
-      case Id('>='): return conv_b(args[0] >= args[1])
-      case Id('<'): return conv_b(args[0] < args[1])
-      case Id('>'): return conv_b(args[0] > args[1])
-      case Id('+'): return Num(args[0] + args[1])
-      case Id('-'): return Num(args[0] - args[1])
-      case Id('*'): return Num(args[0] * args[1])
-      case Id('/'): return Num(args[0] / args[1])
-    return obj.apply(args, table)
+    return '%s%s' % (self.obj, self.args)
+  __repr__ = __str__
 
 class App_infix(App):
   def __str__(self):
-    return '(%s %s %s)' % (self.args[0], self.obj, self.args[1])
+    return '(%s%s%s)' % (self.args[0], self.obj, self.args[1])
+  __repr__ = __str__
 
 class T(Transformer):
-  def dfn_const(self, a):   return (a[0], a[1])
+  def dfn_const(self, a): return (a[0], a[1])
   def dfn_no_args(self, a): return (a[0], Fn(Pars(), a[1]))
-  def dfn_simple(self, a):  return (a[0], Fn(a[1], a[2]))
+  def dfn_simple(self, a): return (a[0], Fn(a[1], a[2]))
   dfn_guards = dfn_simple
   def STR(self, a): return Str(a[1:-1])
   def guards(self, a): return Cases(Case(a[i], a[i+1]) for i in range(0, len(a), 2))
@@ -114,11 +77,10 @@ class T(Transformer):
   def fn(self, a): return Fn(a[0], a[1])
   def fn_guards(self, a): return Fn_guards(a[0], a[1])
   def expr(self, a):
-    if len(a) == 1:
-      return a[0]
-    else:
-      return App_infix(Id(a[1]), Args((a[0], a[2])))
+    return a[0] if len(a) == 1 else\
+      App_infix(Id(a[1]), Args((a[0], a[2])))
   i2 = i3 = expr
+  typed = Typed
   args = Args
   pars = Pars
   NUM = Num
@@ -128,18 +90,20 @@ class T(Transformer):
 
 class Prog:
   lark = Lark(r'''
+  TYPE: NAME
+  typed: NAME ":" TYPE
   start: (_NL | dfn)*
-  dfn: NAME "=" expr _NL        -> dfn_const
-    | NAME "(" ")" "=" expr _NL -> dfn_no_args
-    | NAME pars "=" expr _NL    -> dfn_simple
-    | NAME pars guards          -> dfn_guards
+  dfn: typed "=" [_NL] expr _NL        -> dfn_const
+    | typed "(" ")" "=" [_NL] expr _NL -> dfn_no_args
+    | typed pars "=" [_NL] expr _NL    -> dfn_simple
+    | typed pars "=" [_NL] guards      -> dfn_guards
   guards: ("|" expr "=" expr _NL?)+
   args: "(" (expr ",")* expr ")"
-  pars: "(" (NAME ",")* NAME ")"
+  pars: typed+
   ?atom: NUM | NAME | "(" expr ")" | lst | STR
-    | NAME args               -> app
-    | "@" pars "{" expr "}"   -> fn
-    | "@" pars "{" guards "}" -> fn_guards
+    | NAME args                 -> app
+    | "@" "{" pars "=" expr "}" -> fn
+    | "@" "{" pars guards "}"   -> fn_guards
   lst: "[" (expr ",")* expr "]"
   STR: /"(?:[^"\\]|\\.)*"/u
   ?!expr: i2 | expr ("=="|"<>"|"<="|">="|"<"|">") i2
@@ -153,13 +117,18 @@ class Prog:
   %import common.WS_INLINE
   %ignore (COMMENT _NL)
   %ignore WS_INLINE
-  ''', parser='lalr', transformer = T())
+''', parser='lalr', transformer=T())
   def __init__(self, text):
     self.defs = self.lark.parse(text)
+    #TODO: check types
   def __str__(self):
     return '\n'.join(['%s = %s' % (i, self.defs[i]) for i in self.defs])
-  def eval(self, app = App(Id('main'), Args())):
-    return app.eval(self.defs)
+  __repr__ = __str__
+  def optimize(self):
+    pass
+  def compile(self):
+    for i in self.defs:
+      print(i)
 
 if __name__ == '__main__':
   import argparse
@@ -167,8 +136,8 @@ if __name__ == '__main__':
   from datetime import datetime
   parser = argparse.ArgumentParser(
     prog='EFPL',
-    description='Interpreter of educational functional programming language by A.M.',
-    epilog='(prototype for school project presentation, April 2024)')
+    description='Optimizing compiler (transpiler to C) prototype of educational functional programming language by A.M.',
+    epilog='(efpl v0.0.1, June 2024)')
   parser.add_argument('filename')
   args = parser.parse_args()
   with open(args.filename, 'r') as file:
@@ -178,19 +147,15 @@ if __name__ == '__main__':
     t_p = datetime.now()
     prog = Prog(prog)
     t_p = datetime.now() - t_p
-    print('#### Evaluating... ####')
-    t_e = datetime.now()
-    pp(prog.eval())
-    t_e = datetime.now() - t_e
-    print('#### End of evaluation ####')
+    pp(prog)
+    print('#### Optimizing... ####')
+    t_o = datetime.now()
+    pp(prog.optimize())
+    t_o = datetime.now() - t_o
+    print('#### Compiling... ####')
+    t_c = datetime.now()
+    pp(prog.compile())
+    t_c = datetime.now() - t_c
     print('Parsing time:', t_p)
-    print('Evaluation time:', t_e)
-
-# НЕ УДАЛЯЙ!
-# Больше медиа
-# Тяжелое медиа в приложения
-# В текстовой работе ДОБАВИТЬ СКРИНШОТ В АНТИПЛАГИАТЕ!
-# Распечатанный проект в папку
-# Текст программы в приложении
-# В тексте написать TODO-шки (что можно доработать) (и что будешь дорабатывать)
-# antiplagiat.ru
+    print('Optimization time:', t_o)
+    print('Compilation time:', t_c)
